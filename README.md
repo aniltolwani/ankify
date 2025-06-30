@@ -1,91 +1,90 @@
 # Ankify - ChatGPT to Flashcards
 
-Automatically convert your ChatGPT Socratic dialogues into spaced repetition flashcards.
-
-## Features
-
-- 🤖 Fetches conversations directly from ChatGPT (no manual export needed)
-- 🎯 Extracts pedagogical Q&A pairs using GPT-4
-- 📚 Creates flashcards in Mochi (or saves locally)
-- 🔄 Runs mostly automated (manual login every 2-4 weeks)
+Convert your ChatGPT Socratic dialogue conversations into spaced repetition flashcards.
 
 ## Quick Start
 
-### 1. Install Dependencies
+1. **Setup Authentication** (one-time)
+   ```bash
+   python scripts/setup_auth.py
+   ```
+   Log into ChatGPT when the browser opens.
+
+2. **Run Full Pipeline**
+   ```bash
+   export OPENAI_API_KEY="your-key-here"
+   python main.py --all
+   ```
+
+3. **Find Your Flashcards**
+   Check the `flashcards/` directory for:
+   - `flashcards_*.csv` - Universal format
+   - `anki_flashcards_*.txt` - Anki import format
+   - `flashcards_*.md` - Human-readable format
+   - `flashcards_*.json` - Structured data
+
+## Pipeline Steps
+
+The pipeline consists of 4 steps:
+
+1. **Fetch** - Download conversations from ChatGPT
+2. **Extract** - Find Q&A pairs using GPT-4
+3. **Post-process** - Filter Socratic questions & fix incomplete ones
+4. **Generate** - Create flashcard files
+
+Run individual steps:
+```bash
+python main.py --fetch         # Download new conversations
+python main.py --extract       # Extract Q&A pairs
+python main.py --postprocess   # Filter & fix questions
+python main.py --generate      # Create flashcard files
+```
+
+## Essential Files
+
+```
+ankify/
+├── main.py                    # Main orchestration script
+├── scripts/
+│   └── setup_auth.py         # One-time browser login setup
+├── src/
+│   ├── fetch_conversations.py # Download from ChatGPT
+│   ├── extract_qa.py         # Extract Q&A pairs
+│   ├── postprocess_qa.py     # Filter & fix questions
+│   ├── generate_flashcards.py # Create output files
+│   └── generate_fresh_answers.py # (Optional) Generate new answers
+├── config.yaml               # Configuration
+└── requirements.txt          # Python dependencies
+```
+
+## What It Extracts
+
+The system specifically extracts Socratic teaching questions where ChatGPT tests your understanding:
+- Questions marked with "Q:", "Quick Check:", "Test Question:"
+- Questions at the end of teaching segments
+- Excludes FAQ-style questions with immediate answers
+
+## Example Output
+
+**Question:** If you have a DNA strand that is 10 base pairs long, how many nucleotides total does that mean (considering both strands)?
+
+**Answer:** A DNA strand that is 10 base pairs long would have 20 nucleotides in total, considering both strands. Each base pair consists of two nucleotides, one on each strand.
+
+## Installation
 
 ```bash
-# Option 1: Use the helper script (recommended)
-./run.sh setup
+# Create virtual environment
+python3 -m venv .venv
+source .venv/bin/activate
 
-# Option 2: Manual setup
-python3 -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+# Install dependencies
 pip install -r requirements.txt
-python -m playwright install chromium
+playwright install chromium
 ```
 
-### 2. Initial Setup (One-time)
+## Configuration
 
-```bash
-# Login to ChatGPT and save browser profile
-./run.sh setup
-# Or: source venv/bin/activate && python scripts/setup_auth.py
-```
-
-This opens a browser window. Log in to ChatGPT, then press Enter to save the profile.
-
-### 3. Configure
-
-Edit `config.yaml`:
-- Set your Mochi `deck_id` (or leave as-is to save cards locally)
-- Adjust other settings as needed
-
-### 4. Set API Keys
-
-```bash
-export OPENAI_API_KEY="sk-..."
-export MOCHI_API_KEY="your-mochi-api-key"  # Optional
-```
-
-### 5. Run Pipeline
-
-```bash
-# Run full pipeline
-./run.sh
-
-# Or run individual steps
-./run.sh --fetch    # Fetch conversations
-./run.sh --extract  # Extract Q&A pairs  
-./run.sh --generate # Create flashcards
-
-# If not using the helper script:
-source venv/bin/activate
-python main.py
-```
-
-## Automation
-
-Add to crontab for daily runs:
-
-```bash
-# Run at 2 AM daily
-0 2 * * * cd /path/to/ankify && python main.py >> ankify.log 2>&1
-```
-
-## How It Works
-
-1. **Fetch**: Uses Playwright to access ChatGPT with saved browser profile
-2. **Extract**: GPT-4 identifies teaching questions and answers
-3. **Generate**: Creates flashcards with question on front, answer on back
-
-## Maintenance
-
-- The browser profile lasts 2-4 weeks before needing manual re-login
-- Check logs for "Session expires in X days" warnings
-- Re-run `python scripts/setup_auth.py` when needed
-
-## Output
-
-- Conversations saved to `data/*.json`
-- Extracted Q&A pairs in `data/extracted_qa.json`
-- Local flashcards in `data/flashcards.jsonl` (if Mochi not configured)
+Edit `config.yaml` to customize:
+- Model selection (default: gpt-4o)
+- Output paths
+- Processing options

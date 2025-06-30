@@ -90,17 +90,11 @@ def create_json_format(qa_pairs):
 
 def main():
     """Main entry point."""
-    # Load extracted Q&A pairs - try complete questions first
-    qa_file = DATA_DIR / "extracted_qa_complete.json"
+    # Load processed Q&A pairs
+    qa_file = DATA_DIR / "extracted_qa_final.json"
     if not qa_file.exists():
-        qa_file = DATA_DIR / "extracted_qa_socratic_filtered.json"
-        if not qa_file.exists():
-            qa_file = DATA_DIR / "extracted_qa_per_message.json"
-            if not qa_file.exists():
-                qa_file = DATA_DIR / "extracted_qa.json"
-                if not qa_file.exists():
-                    logging.error("No extracted Q&A pairs found. Run extraction first.")
-                    return 1
+        logging.error("No processed Q&A pairs found. Run extraction and post-processing first.")
+        return 1
     
     with open(qa_file) as f:
         qa_pairs = json.load(f)

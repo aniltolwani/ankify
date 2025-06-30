@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """
-Extract Q&A pairs from ChatGPT conversations using GPT-4.
+Extract Q&A pairs by processing each message individually.
 """
 
 import json
 import logging
+import re
 from pathlib import Path
-from typing import List, Dict
+from typing import List, Dict, Any, Optional
 import os
-from openai import OpenAI
+import requests
 import yaml
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s: %(message)s")
@@ -22,59 +23,123 @@ if not api_key:
     logging.error("OPENAI_API_KEY environment variable not set")
     exit(1)
 
-# Initialize OpenAI client with minimal configuration
-client = OpenAI(
-    api_key=api_key,
-)
 DATA_DIR = Path(config['paths']['data_dir'])
 
-EXTRACTION_PROMPT = """
-You are an expert at identifying pedagogical questions in Socratic dialogues.
+# Simple prompt for individual messages
+MESSAGE_EXTRACTION_PROMPT = """
+Extract any pedagogical questions where the assistant is testing the user's understanding.
 
-Extract ALL questions that serve a teaching purpose from this conversation, including:
-1. Explicit test questions (marked with "Test Question", "Q:", "Quick Check", etc.)
-2. Comprehension checks ("What would happen if...?")
-3. Conceptual probes ("How do you think about...?")
+Look for questions in formats like:
+- Q: [question]
+- Q1: [question], Q2: [question]
+- **Q: [question]**
+- Test Question: [question]
+- Quick Check: [question]
 
-For each question found, return:
-- The complete question text
-- The best available answer (user's if correct, assistant's if user was wrong/incomplete)
-- Empty answer if no answer was provided
+For each question found, extract:
+1. The exact question text
+2. Generate a comprehensive answer based on the context
 
-Return as JSON array:
-[{"question": "...", "answer": "..."}]
+Return JSON array of questions found in this message:
+[{"question": "exact text", "answer": "comprehensive answer"}]
 
-CONVERSATION:
+If no pedagogical questions found, return empty array [].
+
+MESSAGE:
 """
 
-def extract_qa_from_conversation(conv_data: Dict) -> List[Dict]:
-    """Extract Q&A pairs from a single conversation."""
-    # Build conversation text from message tree
-    messages = []
+def call_openai_api(messages):
+    """Call OpenAI API using requests."""
+    url = "https://api.openai.com/v1/chat/completions"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}"
+    }
     
-    # ChatGPT conversations have a complex tree structure
-    # We'll flatten it for simplicity
-    def extract_messages(node):
-        if node is None:
-            return
+    data = {
+        "model": config['models']['extractor'],
+        "messages": messages,
+        "temperature": 0.1,
+        "response_format": {"type": "json_object"}
+    }
+    
+    response = requests.post(url, headers=headers, json=data, timeout=30)
+    if response.status_code == 200:
+        return response.json()
+    else:
+        raise Exception(f"API error: {response.status_code} - {response.text}")
+
+def extract_questions_from_message(content: str) -> List[Dict]:
+    """Extract questions from a single message using GPT-4."""
+    if not content or len(content) < 50:  # Skip very short messages
+        return []
+    
+    try:
+        # For efficiency, first check if message likely contains questions
+        question_indicators = ['Q:', 'Q1:', 'Q2:', 'Test Question', 'Quick Check', '?**']
+        if not any(indicator in content for indicator in question_indicators):
+            return []
         
+        response = call_openai_api([
+            {"role": "system", "content": "Extract pedagogical questions from individual messages. Return JSON array."},
+            {"role": "user", "content": MESSAGE_EXTRACTION_PROMPT + "\n" + content[:8000]}  # Limit per message
+        ])
+        
+        result = json.loads(response['choices'][0]['message']['content'])
+        
+        if isinstance(result, list):
+            return result
+        elif isinstance(result, dict) and 'questions' in result:
+            return result['questions']
+        else:
+            return []
+            
+    except Exception as e:
+        logging.debug(f"Error extracting from message: {e}")
+        return []
+
+def process_conversation_messages(conv_data: Any) -> List[Dict]:
+    """Process each message in conversation individually."""
+    if isinstance(conv_data, list) or not conv_data:
+        return []
+    
+    all_qa_pairs = []
+    processed_messages = 0
+    
+    def process_node(node):
+        nonlocal processed_messages
+        
+        if node is None or isinstance(node, list):
+            return
+            
         message = node.get('message', {})
         if message and message.get('content', {}).get('content_type') == 'text':
             role = message.get('author', {}).get('role', '')
-            content = message.get('content', {}).get('parts', [''])[0]
+            parts = message.get('content', {}).get('parts', [])
             
-            if content and role in ['user', 'assistant']:
-                messages.append(f"{role.upper()}: {content}")
+            # Only process assistant messages
+            if role == 'assistant' and isinstance(parts, list) and parts:
+                content = parts[0] if isinstance(parts[0], str) else str(parts[0])
+                
+                if content:
+                    processed_messages += 1
+                    # Extract questions from this specific message
+                    qa_pairs = extract_questions_from_message(content)
+                    if qa_pairs:
+                        logging.debug(f"Found {len(qa_pairs)} Q&A pairs in message")
+                        all_qa_pairs.extend(qa_pairs)
         
         # Traverse children
-        for child_id in node.get('children', []):
-            if child_id in conv_data.get('mapping', {}):
-                extract_messages(conv_data['mapping'][child_id])
+        children = node.get('children', [])
+        if isinstance(children, list):
+            for child_id in children:
+                if child_id in conv_data.get('mapping', {}):
+                    process_node(conv_data['mapping'][child_id])
     
     # Start from root
     root_id = conv_data.get('current_node')
     if root_id and 'mapping' in conv_data:
-        # Find actual root by going up the tree
+        # Find actual root
         mapping = conv_data['mapping']
         while root_id in mapping and mapping[root_id].get('parent'):
             parent_id = mapping[root_id]['parent']
@@ -83,47 +148,15 @@ def extract_qa_from_conversation(conv_data: Dict) -> List[Dict]:
             else:
                 break
         
-        extract_messages(mapping.get(root_id))
+        process_node(mapping.get(root_id))
     
-    if not messages:
-        return []
-    
-    # Join messages into conversation text
-    conversation_text = "\n\n".join(messages)
-    
-    # Use GPT-4 to extract Q&A pairs
-    try:
-        response = client.chat.completions.create(
-            model=config['models']['extractor'],
-            messages=[
-                {"role": "system", "content": "You extract Q&A pairs from conversations. Return only valid JSON."},
-                {"role": "user", "content": EXTRACTION_PROMPT + conversation_text[:15000]}  # Limit context
-            ],
-            temperature=0.1,
-            response_format={"type": "json_object"}
-        )
-        
-        result = json.loads(response.choices[0].message.content)
-        # Handle both {"questions": [...]} and direct array formats
-        if isinstance(result, dict) and 'questions' in result:
-            return result['questions']
-        elif isinstance(result, list):
-            return result
-        else:
-            # Try to extract array from various formats
-            for key in ['qa_pairs', 'cards', 'items', 'data']:
-                if key in result and isinstance(result[key], list):
-                    return result[key]
-            return []
-            
-    except Exception as e:
-        logging.error(f"Error extracting Q&A: {e}")
-        return []
+    logging.debug(f"Processed {processed_messages} assistant messages")
+    return all_qa_pairs
 
 def process_all_conversations():
     """Process all downloaded conversations."""
     conv_files = list(DATA_DIR.glob("*.json"))
-    conv_files = [f for f in conv_files if f.name != ".state.json"]
+    conv_files = [f for f in conv_files if f.name not in [".state.json", "conversations_list.json", "extracted_qa.json"]]
     
     logging.info(f"Processing {len(conv_files)} conversations...")
     
@@ -136,14 +169,14 @@ def process_all_conversations():
             with open(conv_file) as f:
                 conv_data = json.load(f)
             
-            # Extract Q&A pairs
-            qa_pairs = extract_qa_from_conversation(conv_data)
+            # Process messages individually
+            qa_pairs = process_conversation_messages(conv_data)
             
             if qa_pairs:
                 # Add metadata
                 for qa in qa_pairs:
                     qa['source_conversation'] = conv_file.stem
-                    qa['title'] = conv_data.get('title', 'Untitled')
+                    qa['title'] = conv_data.get('title', 'Untitled') if isinstance(conv_data, dict) else 'Untitled'
                 
                 all_qa_pairs.extend(qa_pairs)
                 logging.info(f"    Found {len(qa_pairs)} Q&A pairs")
