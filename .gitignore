@@ -1,0 +1,6 @@
+data/
+chatgpt_profile/
+flashcards/
+venv/
+.DS_Store
+test*

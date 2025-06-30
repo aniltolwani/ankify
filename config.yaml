@@ -1,0 +1,19 @@
+chatgpt:
+  profile_dir: "./chatgpt_profile"
+  
+openai:
+  api_key: ${OPENAI_API_KEY}
+  
+mochi:
+  api_key: ${MOCHI_API_KEY}
+  deck_id: "YOUR_DECK_ID"  # Replace with your Mochi deck ID
+  
+processing:
+  chunk_size: 40
+  
+models:
+  extractor: "gpt-4o"
+  
+paths:
+  data_dir: "./data"
+  state_file: "./data/.state.json"
