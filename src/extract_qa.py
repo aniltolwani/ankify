@@ -25,7 +25,7 @@ if not api_key:
 
 DATA_DIR = Path(config['paths']['data_dir'])
 
-# Simple prompt for individual messages
+# Prompt for extracting teaching questions with full context
 MESSAGE_EXTRACTION_PROMPT = """
 Extract any pedagogical questions where the assistant is testing the user's understanding.
 
@@ -35,13 +35,18 @@ Look for questions in formats like:
 - **Q: [question]**
 - Test Question: [question]
 - Quick Check: [question]
+- Or any question at the end of an explanation that tests understanding
 
-For each question found, extract:
-1. The exact question text
-2. Generate a comprehensive answer based on the context
+IMPORTANT: Include any necessary context that makes the question complete and self-contained.
+For example, if the message says "If you have a DNA strand that is 10 base pairs long... Q: How many nucleotides total does that mean?"
+Extract as: "If you have a DNA strand that is 10 base pairs long, how many nucleotides total does that mean?"
 
-Return JSON array of questions found in this message:
-[{"question": "exact text", "answer": "comprehensive answer"}]
+For each question found:
+1. Extract the COMPLETE question including any setup/context needed to understand it
+2. Generate a comprehensive answer based on the message content
+
+Return JSON array:
+[{"question": "complete self-contained question", "answer": "comprehensive answer"}]
 
 If no pedagogical questions found, return empty array [].
 
